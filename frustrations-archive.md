@@ -10201,3 +10201,19 @@ FIX: not yet — filed as AF-943 (re-register the invariant against current
  guard so a future wholesale file replacement in this module cannot repeat this
  silently, following the `route.callers_have_routes`/`dead_pub_api` pattern this
  repo already uses for the same class of loss elsewhere).
+
+## board.todo_is_reachable_by_dispatch fails for every project session-lane card, so the documented no-model filing pattern reads as broken dispatch (AF-957)
+VALIDATED: amux | Root-cause fix shipped as 78c328e3: checks.rs todo_is_reachable_by_dispatch gains exempt_project_lanes (leaves population AND denominator; pass and fail evidence both carry it); monitor.rs todo_reachable_check reads project names from group_config WHERE execution_policy IS NOT NULL and partition_project_lanes splits them out, fail-closed (group_config read error -> empty exemption -> old strict verdict returns).
+scripts/safe-cargo.sh check --workspace -> Finished `dev` profile in 3.45s, exit 0
+scripts/test-contended.sh -p amux-server invariants:: -> test result: ok. 229 passed; 0 failed (incl. new project_lane_todo_is_exempt_but_still_reported and dispatch_exemption_tests 3/3)
+live deploy via docker compose build amux && docker compose up -d amux: serving_build 0d44280112672a05 -> bac7bf5d633d07dd, verdicts_from_serving_build=true. Before: /api/health/invariants FAIL board.todo_is_reachable_by_dispatch, evidence by_lane=[{lane: pix-bbs-publish-article, todo: 1}] stranded=1 total_live_todo=1. After, with PBPA-1 still status=todo session=pix-bbs-publish-article (verified same state): status=pass, and the change marker fired once in the server log: marker="project_lane_dispatch_exempt" verdict="dispatch_exempt_project_lane" lanes=pix-bbs-publish-article:1.
+Scope: validates ONLY the invariant-exemption claim. AF-958 (holder with no worker can never renew; reclaim lands the card back in todo) remains open — this archive does not close it.
+AREA: invariants
+SEVERITY: annoys
+STATUS: open
+DATE: 2026-09-30
+SESSION: amux
+CARD: none (logged directly; no card filed)
+SYMPTOM: filing tasks with `session=<project>` (the §7 submit mode for project work; `POST /api/board` never sets `project_group`) puts todo cards on a lane with no registered worker, so `board.todo_is_reachable_by_dispatch` went to `fail` with observed `2 of 2 managed todo cards (100%) belong to unregistered workers: project1 (2). Restore the worker, reassign the task to its intended managed worker, or move i[t]...` and opened incident 23 — while `/api/health/invariants` gained a failure, for as long as any project task existed. None of the invariant's three suggested remedies apply to a project lane: the lane is *supposed* to have no worker, the project name is already registered in `group_config`, and moving the card off the lane loses the ownership the pattern exists to express. It self-healed only because the cards were hard-deleted as part of test teardown (AF-956), not because anything reconciled the two views.
+COST: the recommended no-model workflow makes the health endpoint read unhealthy for its whole duration; a sweep over failing invariants will rediscover this class every time, and the natural misreading is "dispatch is broken" rather than "two subsystems disagree about what a project lane is". Someone under time pressure could also "fix" the red by deleting project cards or registering a fake worker — both worse than the red.
+FIX: not yet fixed. Either exempt lanes registered in `group_config` (especially `enabled:false` / `mode: tasks`) from the invariant's population, or make `POST /api/board` with a project-registered session mark the card as a non-dispatch record so the invariant's "managed todo card" set excludes it. The invariant's own evidence text is quoted above so the class survives the DB rows' deletion.
