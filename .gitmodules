@@ -1,0 +1,3 @@
+[submodule ".opencode/skills/amux-skill"]
+	path = .opencode/skills/amux-skill
+	url = git@github.com:pixb/amux-skill.git

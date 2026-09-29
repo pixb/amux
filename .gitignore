@@ -49,6 +49,14 @@ ios/*.dSYM.zip
 amux.db
 amux.db-*
 
+# docker compose single-host deployment (the bind-mount sources in compose.yaml).
+# State and credentials live here: ./server.env holds the API token, ./data holds
+# amux.db and the logs, ./home holds agent login state. None of it belongs in this
+# public repo, or in any transfer other than a backup.
+/server.env
+/data/
+/home/
+
 .gstack/
 
 # Rust build artifacts

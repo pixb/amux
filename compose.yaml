@@ -1,0 +1,76 @@
+# amux 单机 docker compose 部署
+#
+# 数据与配置全部 bind mount 到本目录，所以 `docker compose down`、重新 pull
+# 镜像、乃至换一台机器重建容器都不会丢状态。备份/迁移 = 复制下面三个挂载源：
+#
+#   ./server.env   服务配置（API key、guard 开关、模型选择…）→ 容器 /root/.amux/server.env
+#   ./data/        运行状态：amux.db、logs/、tls/、endpoint.json、connectors/ → 容器 /root/.amux
+#   ./home/        容器家目录 /root：agent 登录态(.claude/.codex/.gemini)、.gitconfig
+#
+# 首次启动：
+#   cp server.env.example server.env   # 本目录已备好一份，填入 ANTHROPIC_API_KEY 等
+#   vi home/.gitconfig                 # 换成你的 name/email（agent 提交的 author 就是它）
+#   docker compose up -d
+#   https://localhost:8824             # 服务始终走 TLS 且是自签名证书，浏览器选择“继续访问”
+#
+# 改配置：直接 vi ./server.env 即可，服务自己会在约 30s 内热加载（crates/amux-server/
+#   src/config.rs 的 monitor 重载路径），不用重启容器。两个例外必须 `docker compose
+#   restart`：端口（见下）和 AMUX_AUTH_TOKEN（lib.rs 启动时读一次，热加载改不到它）。
+# 容器以 root 运行，所以 ./data 下的文件属 root：宿主上直接读日志要 sudo，
+#   或者 `docker compose logs -f` / `docker exec amux sh`。
+#
+# 端口：容器内固定 8822 —— 那是镜像 ENV AMUX_RS_PORT，也是镜像 HEALTHCHECK 硬编码
+#   的端口，所以 server.env 里改 AMUX_RS_PORT 在容器里不会生效（进程环境优先于文件）。
+#   要换端口改下面 ports 的左边（宿主侧），例如 "9000:8822"。
+#
+# 局域网访问（本部署的实际用法：worker 由局域网其他 agent 承担，服务端不放模型 key）：
+#   浏览器首次登录 —— 打开 https://<宿主IP>:8824/?_token=<AMUX_AUTH_TOKEN>，
+#     服务下发 30 天 owner cookie，之后直接开 https://<宿主IP>:8824 即可。
+#   局域网 agent / 客户端：
+#     AMUX_URL=https://<宿主IP>:8824
+#     AMUX_AUTH_TOKEN=<./server.env 里的同一个值>
+#   没有 token 的直连一律 401（实测）：本机 localhost 直通只在容器内部成立，
+#   宿主与局域网的连接都是从 docker 网关 IP 进来的。
+#   注：不填模型 key 时，看板 intake 这类 helper-model 功能按无模型回退运行
+#   （model_ms=-，不报错），但容器里自己拉的 worker 会停在 Not logged in。
+#
+# docker 自动生成的两个空占位（不是数据，别编辑，删掉下次 up 还会再建）：
+#   ./data/server.env   config 挂载点落在 data 卷里留下的空文件，真正生效的是 ./server.env
+#   ./home/.amux/       data 卷压在 home 卷上留下的空目录
+#
+# 想用本地源码而不是 ghcr 的 :latest：解开 build 段，`docker compose up -d --build`。
+#   （首次 release 构建很慢，本机实测 26m48s，见 CLAUDE.md 的 remote-build 约定。）
+
+services:
+  amux:
+    image: ghcr.io/mixpeek/amux:latest
+    build:
+      context: .                       # 必须是仓库根目录：cloud/docker/Dockerfile 按根目录 COPY
+      dockerfile: cloud/docker/Dockerfile
+    container_name: amux
+    restart: unless-stopped
+    ports:
+      # 宿主 8824（本机 amux 约定）→ 容器 8822（镜像默认端口）
+      - "8824:8822"
+    volumes:
+      - ./data:/root/.amux
+      - ./server.env:/root/.amux/server.env:ro
+      - ./home:/root
+    # chromium 的 /dev/shm 默认只有 64MB，容器里跑浏览器 primitive 会崩在这上面
+    shm_size: 1gb
+    # environment:
+    #   # 镜像默认把运维卡片关掉（云端每租户各看各的）。单机自托管想要
+    #   # invariant / 磁盘告警卡片出现在看板上，就在这里显式打开。
+    #   AMUX_OPS_HEALTH_CARDS: "1"
+    #   # 不设 AMUX_AUTH_TOKEN 时服务自己会在 ./data/auth_token 生成一个令牌，
+    #   # 所以 API 默认就是带令牌才放行（浏览器版面由服务端注入的令牌访问）。
+    #   # 自己指定则写进 ./server.env，改完 `docker compose restart` 才生效。
+    #   # 只给本机用则把上面 ports 改成 "127.0.0.1:8824:8822"。
+    # networks:
+    #   # 要让容器里的 agent 按名字访问本机其他服务（postgres/redis/meilisearch…）时
+    #   # 解开这段；需要先由 ../compose.yaml 建好 external 网络 pix-services。
+    #   - pix-services
+
+# networks:
+#   pix-services:
+#     external: true
